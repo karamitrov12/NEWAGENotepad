@@ -592,6 +592,8 @@ A custom palette is not tied to a Windows mode, so the Rich Edit and scrollbar s
 
 `ApplyTitleBarTheme(hwnd, dark)` is only called by the standalone exe wrapper, not by the panel. In embedded mode the host owns the title bar and is responsible for its own dark/light appearance. The panel reacts to a forwarded `WM_SETTINGCHANGE` (`lParam == L"ImmersiveColorSet"`) when its mode is `NP_THEME_SYSTEM`.
 
+A mode change is reported to the host as `NP_NOTIFY_THEME_CHANGED` (`WM_NOTIFY`, `nmhdr.code == 9`). Hosts should call `GetThemeMode`, resolve it with `ResolveDarkMode`, and re-apply their own frame theme from that handler so the caption stays in sync when the user switches modes from the panel menu.
+
 ---
 
 ## 12. Keyboard Accelerator Coordination

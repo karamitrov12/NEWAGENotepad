@@ -12,6 +12,7 @@
 #include "NotepadPanel.h"
 #include "Theme/Theme.h"
 
+#include <commctrl.h>
 #include <windowsx.h>
 
 // ---- Constants ----
@@ -67,14 +68,12 @@ static int GetSystemDpi()
 
 // ---- Theme ----
 
-static bool IsDarkTheme()
-{
-    return ResolveDarkMode(static_cast<ThemeMode>(kThemeMode));
-}
-
 static void ApplyChromeTheme()
 {
-    ApplyTitleBarTheme(g_hFrame, IsDarkTheme());
+    // The panel owns the mode (the View menu can change it), so ask the panel
+    // instead of assuming the startup value.
+    const int mode = g_hPanel ? GetThemeMode(g_hPanel) : kThemeMode;
+    ApplyTitleBarTheme(g_hFrame, ResolveDarkMode(static_cast<ThemeMode>(mode)));
 }
 
 // ---- Frame procedure ----
@@ -112,6 +111,16 @@ static LRESULT CALLBACK FrameProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
         const int dpi = GetSystemDpi();
         info->ptMinTrackSize.x = ScaleMetric(kMinWidth, dpi);
         info->ptMinTrackSize.y = ScaleMetric(kMinHeight, dpi);
+        return 0;
+    }
+
+    case WM_NOTIFY:
+    {
+        const NMHDR *header = reinterpret_cast<const NMHDR *>(lParam);
+        if (header && header->code == NP_NOTIFY_THEME_CHANGED)
+        {
+            ApplyChromeTheme();
+        }
         return 0;
     }
 

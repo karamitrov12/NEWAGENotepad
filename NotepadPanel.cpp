@@ -1754,8 +1754,11 @@ LRESULT CALLBACK MenuProc(HWND h, UINT m, WPARAM w, LPARAM l)
             EndPaint(h, &ps);
             return 0;
         }
-        FillRoundRect(hdc, rc, Dpi(inst, 8), inst->theme.BgCard);
-        StrokeRoundRect(hdc, rc, Dpi(inst, 8), inst->theme.Border);
+        // The popup is clipped to a rounded region, so filling the whole client
+        // rect leaves no stale pixels where a previous menu used to be.
+        FillSolid(hdc, rc, inst->theme.BgCard);
+        RECT card = {rc.left + 1, rc.top + 1, rc.right - 1, rc.bottom - 1};
+        StrokeRoundRect(hdc, card, Dpi(inst, 8), inst->theme.Border);
         if (!inst->menuItems)
         {
             EndPaint(h, &ps);
@@ -1916,6 +1919,14 @@ int ShowThemedMenuInst(NotepadInstance *inst, HWND owner, int x, int y,
         delete inst->menuItems;
         inst->menuItems = nullptr;
         return 0;
+    }
+
+    // Rounding through a window region keeps the desktop visible in the corners
+    // and avoids painting outside the card.
+    const int radius = Dpi(inst, 8);
+    if (HRGN region = CreateRoundRectRgn(0, 0, maxW + 1, totalH + 1, radius * 2, radius * 2))
+    {
+        SetWindowRgn(inst->menuWnd, region, FALSE);
     }
     SetWindowLongPtrW(inst->menuWnd, GWLP_USERDATA, (LONG_PTR)inst);
     ShowWindow(inst->menuWnd, SW_SHOW);
@@ -3653,11 +3664,36 @@ static void ApplyThemeToDocuments(NotepadInstance *inst)
 static void RefreshTheme(NotepadInstance *inst)
 {
     ApplyThemeToDocuments(inst);
+
+    // Brushes handed to WM_CTLCOLOR* still hold the previous palette.
+    if (inst->brSearchBg)
+    {
+        DeleteObject(inst->brSearchBg);
+        inst->brSearchBg = nullptr;
+    }
+    if (inst->brAppBg)
+    {
+        DeleteObject(inst->brAppBg);
+        inst->brAppBg = nullptr;
+    }
+
+    // Invalidating only the panel leaves every child window -- the toolbar host,
+    // its owner-draw buttons, and the search fields -- painted with the old
+    // palette. RDW_ALLCHILDREN walks the whole tree.
+    const UINT flags = RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW;
     if (inst->hSelf)
     {
-        InvalidateRect(inst->hSelf, nullptr, TRUE);
-        UpdateWindow(inst->hSelf);
+        RedrawWindow(inst->hSelf, nullptr, nullptr, flags);
     }
+    if (inst->hToolbarHost)
+    {
+        RedrawWindow(inst->hToolbarHost, nullptr, nullptr, flags);
+    }
+    if (inst->menuWnd)
+    {
+        InvalidateRect(inst->menuWnd, nullptr, TRUE);
+    }
+
     FireNotify(inst, NP_NOTIFY_THEME_CHANGED, -1);
 }
 
