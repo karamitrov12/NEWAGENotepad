@@ -115,7 +115,9 @@ struct NotepadInstance {
     LOGFONTW     logFont;
 
     // Theme (copy, not global)
-    Theme::Palette theme;
+    ThemePalette theme;
+    ThemeMode    themeMode;
+    bool         darkMode;
 
     // Callback
     NPNOTIFYPROC  notifyProc;
@@ -325,11 +327,15 @@ typedef struct NPTheme {
     COLORREF iconActive;
 } NPTheme;
 
-// Apply a custom theme. Pass NULL to revert to the default dark theme.
+// Apply a custom theme. Pass NULL to restore the current mode's palette.
 NP_API BOOL SetTheme(HWND hPanel, const NPTheme* theme);
 
 // Get the current theme.
 NP_API BOOL GetTheme(HWND hPanel, NPTheme* outTheme);
+
+// Built-in palette selection (System / Light / Dark).
+NP_API BOOL SetThemeMode(HWND hPanel, int mode);
+NP_API int  GetThemeMode(HWND hPanel);
 
 // ============================================================
 //  Font
@@ -377,6 +383,7 @@ NP_API BOOL GetReadOnly(HWND hPanel);
 #define NP_NOTIFY_MODIFIED_CHANGED 6   // dirty flag flipped
 #define NP_NOTIFY_ZOOM_CHANGED     7   // zoom level changed
 #define NP_NOTIFY_FOCUS_CHANGED    8   // panel gained/lost focus
+#define NP_NOTIFY_THEME_CHANGED    9   // palette or theme mode changed
 
 typedef struct NPNotify {
     HWND        hPanel;      // which panel sent this
@@ -561,45 +568,29 @@ For backward compatibility, the standalone exe keeps `HKCU\Software\ModernNotepa
 
 ## 11. Theme Coordination
 
-### 11.1 Default Theme
+### 11.1 Theme Module
 
-The built-in dark theme (current `Theme::Palette`) is the default. It is copied into each `NotepadInstance` at creation time.
+`Theme/Theme.h` owns the palette model. `ThemeMode` is `System`, `Light`, or `Dark`; `ThemePalette` holds the 15 colours the panel paints with. `GetPalette(bool)` returns a built-in palette, `ResolveDarkMode(ThemeMode)` collapses a mode to a decision, and `IsSystemDarkMode()` reads `AppsUseLightTheme` from the current user's personalization key.
+
+Each `NotepadInstance` stores a `ThemePalette`, the requested `ThemeMode`, and the resolved `darkMode` flag. Panels start in `NP_THEME_DARK`, which preserves the palette the library always shipped; the standalone exe selects `NP_THEME_SYSTEM` after creating its panel.
 
 ### 11.2 Custom Theme
 
-`SetTheme(hPanel, &theme)` copies the provided palette into the instance and triggers a full repaint. Every paint function (`PaintTabs`, `PaintSearchBar`, `PaintStatusBar`, `DrawButton`, icon drawing) reads from `instance->theme` instead of the global `Theme::` namespace.
+`SetTheme(hPanel, &theme)` copies the provided palette into the instance and triggers a full repaint. Every paint function (`PaintTabs`, `PaintSearchBar`, `PaintStatusBar`, `DrawButton`, icon drawing) reads from `instance->theme`; nothing reads a global palette. `SetTheme(hPanel, NULL)` restores the palette of the instance's current mode.
 
-### 11.3 Light Theme Support
+A custom palette is not tied to a Windows mode, so the Rich Edit and scrollbar styling is derived from the background luminance (`IsDarkPalette`). Custom palettes are not overwritten by `WM_SETTINGCHANGE`; changing the mode discards them.
 
-The color set is already well-structured (14 named colors). A light theme is just a different `NPTheme` struct:
+### 11.3 Built-in Light Palette
 
-```cpp
-NPTheme light = {
-    .bgApp      = RGB(255, 255, 255),
-    .bgPanel    = RGB(248, 248, 248),
-    .bgCard     = RGB(238, 238, 238),
-    .bgBtn      = RGB(228, 228, 230),
-    .bgBtnHi    = RGB(218, 218, 222),
-    .border     = RGB(200, 200, 204),
-    .borderSoft = RGB(220, 220, 224),
-    .textHi     = RGB(28, 28, 32),
-    .textMid    = RGB(100, 100, 108),
-    .textLow    = RGB(150, 150, 158),
-    .accent     = RGB(37, 99, 235),
-    .selBg      = RGB(206, 224, 255),
-    .iconIdle   = RGB(60, 60, 68),
-    .iconActive = RGB(20, 20, 28),
-};
-SetTheme(hPanel, &light);
-```
+`LightPalette()` in `Theme/Theme.cpp` returns the light colour set; `SetThemeMode(hPanel, NP_THEME_LIGHT)` applies it. Hosts that need different colours keep using `SetTheme` with their own `NPTheme`.
 
 ### 11.4 RichEdit Theme
 
-`SetWindowTheme(hEdit, L"DarkMode_Explorer", nullptr)` is called for dark mode. For light mode, call `SetWindowTheme(hEdit, L"Explorer", nullptr)` and set `EM_SETBKGNDCOLOR` to the theme's `bgApp`.
+`ApplyControlTheme(hwnd, darkMode)` selects `DarkMode_Explorer` or `Explorer`, and the panel pushes `EM_SETBKGNDCOLOR` plus `CFM_COLOR` for every document when the palette changes. The inline rename editor and both search fields use the same call.
 
 ### 11.5 DWM Dark Title Bar
 
-`DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark))` is only called by the standalone exe wrapper, not by the DLL. In embedded mode the host owns the title bar and is responsible for its own dark/light appearance.
+`ApplyTitleBarTheme(hwnd, dark)` is only called by the standalone exe wrapper, not by the panel. In embedded mode the host owns the title bar and is responsible for its own dark/light appearance. The panel reacts to a forwarded `WM_SETTINGCHANGE` (`lParam == L"ImmersiveColorSet"`) when its mode is `NP_THEME_SYSTEM`.
 
 ---
 

@@ -1,0 +1,18 @@
+{
+  "id": "ws_af7dd503",
+  "name": "NEAGENOTEPAD",
+  "slug": "neagenotepad",
+  "defaults": {
+    "permissionMode": "safe",
+    "cyclablePermissionModes": [
+      "safe",
+      "allow-all"
+    ],
+    "enabledSourceSlugs": []
+  },
+  "localMcpServers": {
+    "enabled": true
+  },
+  "createdAt": 1792428861579,
+  "updatedAt": 1792428861581
+}

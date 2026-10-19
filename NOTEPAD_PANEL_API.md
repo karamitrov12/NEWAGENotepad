@@ -226,6 +226,18 @@ Returns TRUE on success.
 
 ### Theme
 
+Theme modes:
+
+```c
+#define NP_THEME_SYSTEM 0   // follow the Windows app theme
+#define NP_THEME_LIGHT  1
+#define NP_THEME_DARK   2
+```
+
+Panels start in `NP_THEME_DARK`, which is the palette this library has always
+shipped, so an existing host sees no visual change. The standalone application
+selects `NP_THEME_SYSTEM` after creating its panel.
+
 #### `NPTheme` struct
 ```cpp
 typedef struct NPTheme {
@@ -233,7 +245,7 @@ typedef struct NPTheme {
     COLORREF bgPanel;      // tab bar / toolbar / status bar
     COLORREF bgCard;       // active tab / search input
     COLORREF bgBtn;        // chip buttons
-    COLORREF bgBtnHi;      // pressed buttons
+    COLORREF bgBtnHi;      // pressed buttons and hovered tabs
     COLORREF border;       // strong borders
     COLORREF borderSoft;   // subtle separators
     COLORREF textHi;       // primary text
@@ -250,15 +262,41 @@ typedef struct NPTheme {
 ```cpp
 BOOL SetTheme(HWND hPanel, const NPTheme* theme);
 ```
-Applies a custom color palette. Pass NULL to revert to the default dark theme.
-Also updates RichEdit background and text color for all tabs. Triggers a full
-repaint.
+Applies a custom color palette. Pass NULL to restore the palette of the current
+theme mode. The struct is copied, so the pointer may be released on return.
+Also updates RichEdit background and text color for all tabs and triggers a full
+repaint. A custom palette survives `WM_SETTINGCHANGE` until the mode is changed.
 
 #### `GetTheme`
 ```cpp
 BOOL GetTheme(HWND hPanel, NPTheme* outTheme);
 ```
 Reads the current theme palette.
+
+#### `SetThemeMode`
+```cpp
+BOOL SetThemeMode(HWND hPanel, int mode);
+```
+Selects a built-in palette. `NP_THEME_SYSTEM` reads
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize\AppsUseLightTheme`
+each time it is applied. Returns FALSE for an unknown mode.
+
+A host that wants live theme changes forwards the broadcast to the panel:
+
+```cpp
+case WM_SETTINGCHANGE:
+    if (lParam && wcscmp((LPCWSTR)lParam, L"ImmersiveColorSet") == 0)
+        SendMessageW(hPanel, WM_SETTINGCHANGE, wParam, lParam);
+    break;
+```
+
+#### `GetThemeMode`
+```cpp
+int GetThemeMode(HWND hPanel);
+```
+Returns `NP_THEME_SYSTEM`, `NP_THEME_LIGHT`, or `NP_THEME_DARK`.
+
+Changing the mode raises `NP_NOTIFY_THEME_CHANGED`.
 
 #### Light theme example
 ```cpp
@@ -368,6 +406,7 @@ typedef struct NPNotify {
 | `NP_NOTIFY_MODIFIED_CHANGED` | 6 | Dirty flag transitioned |
 | `NP_NOTIFY_ZOOM_CHANGED` | 7 | Zoom level changed |
 | `NP_NOTIFY_FOCUS_CHANGED` | 8 | Panel gained/lost focus |
+| `NP_NOTIFY_THEME_CHANGED` | 9 | Palette or theme mode changed |
 
 #### `NPNOTIFYPROC` callback
 ```cpp
