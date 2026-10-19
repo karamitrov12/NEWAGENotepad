@@ -1,0 +1,2 @@
+#include "resource.h"
+IDI_APP_ICON ICON "res/newagecad_N_artistic.ico"
