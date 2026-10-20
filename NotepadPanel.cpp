@@ -123,16 +123,27 @@ enum ToolbarSize
     TBSIZE_LARGE
 };
 
+// ---- Enums ----
+enum class NPDocType {
+    Text,
+    Pdf
+};
+
 // ---- Document model ----
 struct Document
 {
-    HWND hEdit = nullptr;
-    std::wstring filePath;
-    std::wstring titleOverride;
-    bool modified = false;
-    int zoom = 100;
-    bool wordWrap = true;
-    bool readOnly = false;
+    NPDocType docType = NPDocType::Text; // Define the document type for the current tab.
+    HWND hEdit = nullptr; // Declare the RichEdit window handle for text documents.
+    void* pdfDoc = nullptr; // Pointer to the PDFium document object.
+    HWND hPdfView = nullptr; // Declare the window handle for the PDF view.
+    int currentPage = 0; // Store the current page index for PDF viewing.
+    float pdfZoom = 1.0f; // Store the current zoom level for PDF rendering.
+    std::wstring filePath; // The file path of the current document.
+    std::wstring titleOverride; // An optional override for the document's title.
+    bool modified = false; // Flag indicating if the document has unsaved changes.
+    int zoom = 100; // The current zoom percentage for text documents.
+    bool wordWrap = true; // Flag indicating if word wrap is enabled for text documents.
+    bool readOnly = false; // Flag indicating if the document is in read-only mode.
 
     std::wstring Title() const
     {
@@ -158,7 +169,7 @@ struct Document
             return L"Untitled";
         fs::path p(filePath);
         std::wstring stem = p.stem().wstring();
-        return stem.empty() ? p.filename().wstring() : stem;
+        return stem.empty() ? p.filename().wstring() : p.filename().wstring();
     }
 };
 
@@ -564,12 +575,25 @@ void SetActiveDoc(NotepadInstance *inst, int index)
         Document *old = inst->docs[inst->activeDoc];
         if (old->hEdit)
             ShowWindow(old->hEdit, SW_HIDE);
+        else if (old->hPdfView)
+            ShowWindow(old->hPdfView, SW_HIDE);
     }
     inst->activeDoc = index;
     SyncFromActive(inst);
     Document *doc = Active(inst);
-    if (doc && doc->hEdit)
-        ShowWindow(doc->hEdit, SW_SHOW);
+    if (doc)
+    {
+        if (doc->docType == NPDocType::Text && doc->hEdit)
+        {
+            SetFocus(doc->hEdit);
+            ShowWindow(doc->hEdit, SW_SHOW);
+        }
+        else if (doc->docType == NPDocType::Pdf && doc->hPdfView)
+        {
+            SetFocus(doc->hPdfView);
+            ShowWindow(doc->hPdfView, SW_SHOW);
+        }
+    }
     ApplyWordWrap(inst);
     ApplyZoom(inst);
     if (!inst->isChild && inst->hSelf)
@@ -589,8 +613,6 @@ void SetActiveDoc(NotepadInstance *inst, int index)
         UpdateLayout(inst, inst->hSelf);
         InvalidateRect(inst->hSelf, nullptr, TRUE);
     }
-    if (inst->hEdit)
-        SetFocus(inst->hEdit);
     FireNotify(inst, NP_NOTIFY_TAB_CHANGED, index);
 }
 
@@ -602,53 +624,74 @@ Document *CreateDoc(NotepadInstance *inst, const std::wstring &initialText,
     doc->zoom = inst->zoom;
     doc->wordWrap = inst->wordWrap;
     doc->readOnly = inst->readOnly;
+
     HWND hParent = inst->hSelf;
-    doc->hEdit = CreateWindowExW(0, L"RICHEDIT50W", L"",
-                                 WS_CHILD | WS_TABSTOP | WS_VSCROLL | ES_MULTILINE |
-                                     ES_AUTOVSCROLL | ES_WANTRETURN | ES_NOHIDESEL,
-                                 0, 0, 100, 100, hParent, nullptr, inst->hInst, nullptr);
-    SendMessageW(doc->hEdit, EM_SETBKGNDCOLOR, 0, inst->theme.BgApp);
-    SendMessageW(doc->hEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
-                 MAKELPARAM(Dpi(inst, 16), Dpi(inst, 16)));
-    SendMessageW(doc->hEdit, EM_SETUNDOLIMIT, 500, 0);
-    ApplyControlTheme(doc->hEdit, inst->darkMode);
-    SetWindowSubclass(doc->hEdit, EditProc, 1, (DWORD_PTR)inst);
-    if (inst->readOnly)
-        SendMessageW(doc->hEdit, EM_SETREADONLY, TRUE, 0);
-    if (!initialText.empty())
+
+    // Determine document type based on extension
+    fs::path p(filePath);
+    std::wstring ext = p.extension().wstring();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::towupper);
+
+    if (ext == L".PDF")
     {
-        SETTEXTEX st{};
-        st.flags = ST_DEFAULT;
-        st.codepage = 1200;
-        std::wstring normalized;
-        normalized.reserve(initialText.size() + 16);
-        for (wchar_t c : initialText)
-        {
-            if (c == L'\r')
-                continue;
-            if (c == L'\n')
-                normalized += L"\r\n";
-            else
-                normalized += c;
-        }
-        SendMessageW(doc->hEdit, EM_SETTEXTEX, (WPARAM)&st, (LPARAM)normalized.c_str());
+        doc->docType = NPDocType::Pdf;
+        doc->pdfDoc = nullptr; // Placeholder for PDFium document.
+        doc->pdfZoom = 1.0f;
+        doc->currentPage = 0;
+        // Create a placeholder PDF view window.
+        doc->hPdfView = CreateWindowExW(0, L"PdfViewClass", L"",
+                                        WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+                                        0, 0, 100, 100, hParent, nullptr, inst->hInst, nullptr);
     }
-    SendMessageW(doc->hEdit, EM_SETMODIFY, FALSE, 0);
-    doc->modified = false;
-    CHARFORMAT2W cf{};
-    cf.cbSize = sizeof(cf);
-    cf.dwMask = CFM_FACE | CFM_SIZE | CFM_COLOR;
-    cf.crTextColor = inst->theme.TextHi;
-    cf.yHeight = (LONG)(MulDiv(inst->logFont.lfHeight, 1440, inst->dpi));
-    if (cf.yHeight < 0)
-        cf.yHeight = -cf.yHeight;
-    wcscpy_s(cf.szFaceName, inst->logFont.lfFaceName);
-    SendMessageW(doc->hEdit, EM_SETCHARFORMAT, SCF_DEFAULT | SCF_ALL, (LPARAM)&cf);
-    if (doc->wordWrap)
-        SendMessageW(doc->hEdit, EM_SETTARGETDEVICE, 0, 0);
     else
-        SendMessageW(doc->hEdit, EM_SETTARGETDEVICE, 0, 1);
-    SendMessageW(doc->hEdit, EM_SETZOOM, (WPARAM)doc->zoom, (WPARAM)100);
+    {
+        doc->docType = NPDocType::Text;
+        doc->hEdit = CreateWindowExW(0, L"RICHEDIT50W", L"",
+                                     WS_CHILD | WS_TABSTOP | WS_VSCROLL | ES_MULTILINE |
+                                         ES_AUTOVSCROLL | ES_WANTRETURN | ES_NOHIDESEL,
+                                         0, 0, 100, 100, hParent, nullptr, inst->hInst, nullptr);
+        SendMessageW(doc->hEdit, EM_SETBKGNDCOLOR, 0, inst->theme.BgApp);
+        SendMessageW(doc->hEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+                     MAKELPARAM(Dpi(inst, 16), Dpi(inst, 16)));
+        SendMessageW(doc->hEdit, EM_SETUNDOLIMIT, 500, 0);
+        ApplyControlTheme(doc->hEdit, inst->darkMode);
+        SetWindowSubclass(doc->hEdit, EditProc, 1, (DWORD_PTR)inst);
+        if (inst->readOnly)
+            SendMessageW(doc->hEdit, EM_SETREADONLY, TRUE, 0);
+        if (!initialText.empty())
+        {
+            SETTEXTEX st{};
+            st.flags = ST_DEFAULT;
+            st.codepage = 1200;
+            std::wstring normalized;
+            normalized.reserve(initialText.size() + 16);
+            for (wchar_t c : initialText)
+            {
+                if (c == L'\r')
+                    continue;
+                if (c == L'\n')
+                    normalized += L"\r\n";
+                else
+                    normalized += c;
+            }
+            SendMessageW(doc->hEdit, EM_SETTEXTEX, (WPARAM)&st, (LPARAM)normalized.c_str());
+        }
+        SendMessageW(doc->hEdit, EM_SETMODIFY, FALSE, 0);
+        CHARFORMAT2W cf{};
+        cf.cbSize = sizeof(cf);
+        cf.dwMask = CFM_FACE | CFM_SIZE | CFM_COLOR;
+        cf.crTextColor = inst->theme.TextHi;
+        cf.yHeight = (LONG)(MulDiv(inst->logFont.lfHeight, 1440, inst->dpi));
+        if (cf.yHeight < 0)
+            cf.yHeight = -cf.yHeight;
+        wcscpy_s(cf.szFaceName, inst->logFont.lfFaceName);
+        SendMessageW(doc->hEdit, EM_SETCHARFORMAT, SCF_DEFAULT | SCF_ALL, (LPARAM)&cf);
+        if (doc->wordWrap)
+            SendMessageW(doc->hEdit, EM_SETTARGETDEVICE, 0, 0);
+        else
+            SendMessageW(doc->hEdit, EM_SETTARGETDEVICE, 0, 1);
+        SendMessageW(doc->hEdit, EM_SETZOOM, (WPARAM)doc->zoom, (WPARAM)100);
+    }
     inst->docs.push_back(doc);
     return doc;
 }
@@ -686,10 +729,20 @@ bool CloseDoc(NotepadInstance *inst, int index)
         if (!ConfirmSaveDoc(inst, doc))
             return false;
     }
-    HWND h = doc->hEdit;
-    doc->hEdit = nullptr;
-    if (h)
-        DestroyWindow(h);
+    if (doc->docType == NPDocType::Text)
+    {
+        HWND h = doc->hEdit;
+        doc->hEdit = nullptr;
+        if (h)
+            DestroyWindow(h);
+    }
+    else
+    {
+        HWND h = doc->hPdfView;
+        doc->hPdfView = nullptr;
+        if (h)
+            DestroyWindow(h);
+    }
     inst->docs.erase(inst->docs.begin() + index);
     delete doc;
     FireNotify(inst, NP_NOTIFY_TAB_CLOSED, index);
