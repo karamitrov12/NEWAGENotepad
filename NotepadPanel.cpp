@@ -62,6 +62,11 @@ static const wchar_t REG_KEY[] = L"Software\\ModernNotepad";
 #define IDC_TB_ZOOM_OUT 1107
 #define IDC_TB_ZOOM_IN 1108
 #define IDC_TB_WRAP 1109
+#define IDC_TB_PDF_PREV 1110
+#define IDC_TB_PDF_NEXT 1111
+#define IDC_TB_PDF_ZOOM_IN 1112
+#define IDC_TB_PDF_ZOOM_OUT 1113
+#define IDC_TB_ANNOTATE 1114
 // IDM_* match NP_CMD_* values in the public header
 #define IDM_NEW NP_CMD_NEW
 #define IDM_OPEN NP_CMD_OPEN
@@ -212,6 +217,11 @@ enum class Icon
     Next,
     Check,
     Plus,
+    PdfPrev,
+    PdfNext,
+    PdfZoomIn,
+    PdfZoomOut,
+    Annotate,
 };
 
 struct BtnStyle
@@ -264,7 +274,7 @@ struct NotepadInstance
     bool tbVisible = true;
     HFONT iconFont = nullptr;
     HWND hToolbarHost = nullptr;
-    HWND hTbBtns[10] = {};
+    HWND hTbBtns[15] = {};
     HWND hotBtn = nullptr;
 
     // Tab bar state
@@ -2033,6 +2043,21 @@ static bool ButtonStyleFor(NotepadInstance *inst, int id, BtnStyle &st)
     case IDC_TB_WRAP:
         st = {Icon::Wrap, false, true, inst->wordWrap, inst->theme.IconIdle};
         return true;
+    case IDC_TB_PDF_PREV:
+        st = {Icon::PdfPrev, false, true, false, inst->theme.IconIdle};
+        return true;
+    case IDC_TB_PDF_NEXT:
+        st = {Icon::PdfNext, false, true, false, inst->theme.IconIdle};
+        return true;
+    case IDC_TB_PDF_ZOOM_IN:
+        st = {Icon::PdfZoomIn, false, true, false, inst->theme.IconIdle};
+        return true;
+    case IDC_TB_PDF_ZOOM_OUT:
+        st = {Icon::PdfZoomOut, false, true, false, inst->theme.IconIdle};
+        return true;
+    case IDC_TB_ANNOTATE:
+        st = {Icon::Annotate, false, true, false, inst->theme.IconIdle};
+        return true;
     case IDC_SEARCH_NEXT:
         st = {Icon::Next, false, true, false, inst->theme.IconIdle};
         return true;
@@ -3356,10 +3381,11 @@ static void InitInstance(NotepadInstance *inst, HWND hWnd, HWND hParent, HINSTAN
 
     inst->hToolbarHost = CreateWindowW(TOOLBAR_CLASS, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
                                        0, 0, 100, Dpi(inst, 46), hWnd, nullptr, hInst, nullptr);
-    static const int tbIds[10] = {IDC_TB_MENU,    IDC_TB_NEW,  IDC_TB_OPEN, IDC_TB_SAVE,
-                                  IDC_TB_UNDO,    IDC_TB_REDO, IDC_TB_FIND, IDC_TB_ZOOM_OUT,
-                                  IDC_TB_ZOOM_IN, IDC_TB_WRAP};
-    for (int i = 0; i < 10; ++i)
+    static const int tbIds[15] = {IDC_TB_MENU,    IDC_TB_NEW,  IDC_TB_OPEN, IDC_TB_SAVE,
+                                      IDC_TB_UNDO,    IDC_TB_REDO, IDC_TB_FIND, IDC_TB_ZOOM_OUT,
+                                      IDC_TB_ZOOM_IN, IDC_TB_WRAP, IDC_TB_PDF_PREV, IDC_TB_PDF_NEXT,
+                                      IDC_TB_PDF_ZOOM_IN, IDC_TB_PDF_ZOOM_OUT, IDC_TB_ANNOTATE};
+    for (int i = 0; i < 15; ++i)
     {
         inst->hTbBtns[i] = MakeButton(inst, inst->hToolbarHost, tbIds[i]);
         SetWindowSubclass(inst->hTbBtns[i], ToolbarBtnProc, 100 + i, 0);
