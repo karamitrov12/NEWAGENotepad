@@ -1,41 +1,23 @@
 // NotepadPanel.cpp -- Embeddable Notepad clone panel DLL
-//
-// Each panel window owns a NotepadInstance resolved from GWLP_USERDATA, so
-// several panels can coexist in one process. This translation unit exports the
-// public C API documented in NotepadPanel.h and owns every child window,
-// font, brush, and document record the panel creates.
-//
-// Build: NOTEPAD_PANEL_STATIC for the static library configuration,
-//        NOTEPAD_PANEL_EXPORTS for the DLL configuration.
-//        msftedit.dll is loaded on demand by InitializeNotepadPanel.
-
 #include "pch.h"
-
 #if !defined(NOTEPAD_PANEL_STATIC) && !defined(NOTEPAD_PANEL_EXPORTS)
 #define NOTEPAD_PANEL_EXPORTS
 #endif
-
 #include "NotepadPanel.h"
 #include "Theme/Theme.h"
-
 #include <windowsx.h>
 #include <commctrl.h>
 #include <richedit.h>
 #include <shellapi.h>
 #include <commdlg.h>
-
 #include <algorithm>
 #include <cwchar>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
-#include "PdfPanel.h"
-#pragma comment(lib, "PdfPanel.lib")
 #include <string>
 #include <unordered_set>
-#include #include <vector>
-#include "PdfPanel.h"
-#pragma comment(lib, "PdfPanel.lib")
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -46,7 +28,7 @@ static const wchar_t MENU_CLASS[] = L"NotepadPanelMenu";
 static const wchar_t APP_NAME[] = L"Neage Notepad";
 static const wchar_t REG_KEY[] = L"Software\\ModernNotepad";
 
-// Control IDs (same values as the standalone, kept for compatibility)
+// Control IDs
 #define IDC_EDIT 1001
 #define IDC_SEARCH_FIND 1010
 #define IDC_SEARCH_REPL 1011
@@ -71,6 +53,7 @@ static const wchar_t REG_KEY[] = L"Software\\ModernNotepad";
 #define IDC_TB_PDF_ZOOM_IN 1112
 #define IDC_TB_PDF_ZOOM_OUT 1113
 #define IDC_TB_ANNOTATE 1114
+
 // IDM_* match NP_CMD_* values in the public header
 #define IDM_NEW NP_CMD_NEW
 #define IDM_OPEN NP_CMD_OPEN
@@ -131,9 +114,8 @@ enum ToolbarSize
     TBSIZE_MEDIUM,
     TBSIZE_LARGE
 };
-
-// ---- Enums ----
-enum class NPDocType {
+enum class NPDocType
+{
     Text,
     Pdf
 };
@@ -141,18 +123,18 @@ enum class NPDocType {
 // ---- Document model ----
 struct Document
 {
-    NPDocType docType = NPDocType::Text; // Define the document type for the current tab.
-    HWND hEdit = nullptr; // Declare the RichEdit window handle for text documents.
-    void* pdfDoc = nullptr; // Pointer to the PDFium document object.
-    HWND hPdfView = nullptr; // Declare the window handle for the PDF view.
-    int currentPage = 0; // Store the current page index for PDF viewing.
-    float pdfZoom = 1.0f; // Store the current zoom level for PDF rendering.
-    std::wstring filePath; // The file path of the current document.
-    std::wstring titleOverride; // An optional override for the document's title.
-    bool modified = false; // Flag indicating if the document has unsaved changes.
-    int zoom = 100; // The current zoom percentage for text documents.
-    bool wordWrap = true; // Flag indicating if word wrap is enabled for text documents.
-    bool readOnly = false; // Flag indicating if the document is in read-only mode.
+    NPDocType docType = NPDocType::Text;
+    HWND hEdit = nullptr;
+    void *pdfDoc = nullptr;
+    HWND hPdfView = nullptr;
+    int currentPage = 0;
+    float pdfZoom = 1.0f;
+    std::wstring filePath;
+    std::wstring titleOverride;
+    bool modified = false;
+    int zoom = 100;
+    bool wordWrap = true;
+    bool readOnly = false;
 
     std::wstring Title() const
     {
@@ -182,14 +164,13 @@ struct Document
     }
 };
 
-// ---- Tab hit-test / menu / button types (unchanged) ----
+// ---- Tab hit-test / menu / button types ----
 struct TabRect
 {
     RECT rc;
     RECT rcClose;
     int index = -1;
 };
-
 struct MenuItem
 {
     int id = 0;
@@ -199,7 +180,6 @@ struct MenuItem
     bool checked = false;
     bool disabled = false;
 };
-
 enum class Icon
 {
     New,
@@ -225,9 +205,8 @@ enum class Icon
     PdfNext,
     PdfZoomIn,
     PdfZoomOut,
-    Annotate,
+    Annotate
 };
-
 struct BtnStyle
 {
     Icon icon;
@@ -237,28 +216,21 @@ struct BtnStyle
     COLORREF fg;
 };
 
-// ---- Instance context -- replaces all former globals ----
+// ---- Instance context ----
 struct NotepadInstance
 {
-    // Window handles
     HWND hSelf = nullptr;
     HWND hParent = nullptr;
     HINSTANCE hInst = nullptr;
     int instanceId = 0;
-
-    // Documents
     std::vector<Document *> docs;
     int activeDoc = -1;
-
-    // Aliases to the active document
     HWND hEdit = nullptr;
     std::wstring currentFile;
     bool modified = false;
     int zoom = 100;
     bool wordWrap = true;
     bool readOnly = false;
-
-    // Search bar state
     bool searchOpen = false;
     bool replaceOpen = false;
     bool searchCase = false;
@@ -270,8 +242,6 @@ struct NotepadInstance
     HWND hSearchCase = nullptr;
     HWND hSearchReplOne = nullptr;
     HWND hSearchReplAll = nullptr;
-
-    // Toolbar state
     ToolbarDock tbDock = TBDOCK_TOP;
     ToolbarSize tbSize = TBSIZE_MEDIUM;
     bool tbFloatHoriz = true;
@@ -280,48 +250,30 @@ struct NotepadInstance
     HWND hToolbarHost = nullptr;
     HWND hTbBtns[15] = {};
     HWND hotBtn = nullptr;
-
-    // Tab bar state
     std::vector<TabRect> tabRects;
     RECT tabNewBtnRect{};
     int tabHot = -1;
     int tabCloseHot = -1;
     bool trackingMouse = false;
-
-    // Inline rename state
     HWND hRenameEdit = nullptr;
     int renamingTab = -1;
-
-    // Layout rects
     RECT tabBarRect{};
     RECT searchRect{};
     RECT statusRect{};
     RECT editRect{};
-
-    // Display state
     bool showStatus = true;
     int dpi = 96;
-
-    // Fonts
     HFONT font = nullptr;
     HFONT fontBold = nullptr;
     HFONT fontSmall = nullptr;
     LOGFONTW logFont{};
-
-    // Theme
     ThemePalette theme;
     ThemeMode themeMode = ThemeMode::Dark;
     bool darkMode = true;
     bool customTheme = false;
-
-    // Callback
     NPNOTIFYPROC notifyProc = nullptr;
     void *notifyUserData = nullptr;
-
-    // Suppressed shortcuts
     std::unordered_set<int> suppressedCmds;
-
-    // Menu state (transient, per ShowThemedMenu call)
     bool menuDone = false;
     int menuResult = 0;
     HWND menuWnd = nullptr;
@@ -329,24 +281,15 @@ struct NotepadInstance
     int menuHot = -1;
     int menuItemH = 0;
     int menuPadY = 0;
-
-    // Child mode (WS_CHILD)
     bool isChild = false;
-
-    // Host-managed settings (skip registry)
     bool hostManaged = false;
-
-    // Static brush for WM_CTLCOLOR* (per-instance to match theme)
     HBRUSH brSearchBg = nullptr;
     HBRUSH brAppBg = nullptr;
-
-    // Instance ID counter
     static int s_nextId;
 };
-
 int NotepadInstance::s_nextId = 1;
 
-// ---- Process-global state (shared across all panel instances) ----
+// ---- Process-global state ----
 static HINSTANCE g_hInst = nullptr;
 static bool g_classesRegistered = false;
 static HMODULE g_msftedit = nullptr;
@@ -358,7 +301,6 @@ static NotepadInstance *GetInstance(HWND hWnd)
         return nullptr;
     return reinterpret_cast<NotepadInstance *>(GetWindowLongPtrW(hWnd, GWLP_USERDATA));
 }
-
 static inline int Dpi(NotepadInstance *inst, int value)
 {
     return ScaleMetric(value, inst->dpi);
@@ -389,7 +331,7 @@ static std::wstring BaseNameW(const std::wstring &path)
     return (p == std::wstring::npos) ? path : path.substr(p + 1);
 }
 
-// ---- Registry helpers (only used in standalone mode) ----
+// ---- Registry helpers ----
 static std::wstring RegReadStr(const wchar_t *name, const std::wstring &def)
 {
     HKEY k;
@@ -400,9 +342,7 @@ static std::wstring RegReadStr(const wchar_t *name, const std::wstring &def)
     DWORD type = REG_SZ;
     std::wstring out = def;
     if (RegQueryValueExW(k, name, nullptr, &type, (LPBYTE)buf, &sz) == ERROR_SUCCESS)
-    {
         out.assign(buf, sz / sizeof(wchar_t) - 1);
-    }
     RegCloseKey(k);
     return out;
 }
@@ -453,7 +393,7 @@ static void FireNotify(NotepadInstance *inst, UINT code, int tabIndex)
     }
 }
 
-// ---- GDI helpers (theme-aware via instance) ----
+// ---- GDI helpers ----
 static void FillSolid(HDC hdc, const RECT &rc, COLORREF c)
 {
     HBRUSH br = CreateSolidBrush(c);
@@ -494,7 +434,7 @@ static void Circle(HDC hdc, int cx, int cy, int r, COLORREF fill)
     DeleteObject(br);
 }
 
-// ---- Icon drawing (unchanged logic, uses instance dpi) ----
+// ---- Icon drawing ----
 static void DrawIcon(HDC hdc, NotepadInstance *inst, Icon icon, const RECT &r, COLORREF color, int)
 {
     static constexpr wchar_t glyphs[] = {L'\uEA1A', L'\uE8E5', L'\uE74E', L'\uE7A7', L'\uE7A6',
@@ -520,7 +460,6 @@ LRESULT CALLBACK MenuProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK EditProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 LRESULT CALLBACK RenameEditProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 LRESULT CALLBACK ToolbarBtnProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
-
 void UpdateLayout(NotepadInstance *inst, HWND hWnd);
 void SetToolbarDock(NotepadInstance *inst, ToolbarDock dock);
 void SetToolbarSize(NotepadInstance *inst, ToolbarSize size);
@@ -540,7 +479,6 @@ void SetActiveDoc(NotepadInstance *inst, int index);
 void SetModified(NotepadInstance *inst, bool modified);
 void ShowTabMenu(NotepadInstance *inst, int index, int x, int y);
 void ShowToolbarMenu(NotepadInstance *inst, HWND owner, int x, int y);
-
 static bool IsDarkPalette(const ThemePalette &palette);
 static void ApplyThemeToDocuments(NotepadInstance *inst);
 static void RefreshTheme(NotepadInstance *inst);
@@ -619,7 +557,7 @@ void SetActiveDoc(NotepadInstance *inst, int index)
             title = BaseNameW(inst->currentFile);
         if (inst->modified)
             title = L"\u25CF " + title;
-        title += L"  \u2014  " + std::wstring(APP_NAME);
+        title += L" \u2014 " + std::wstring(APP_NAME);
         SetWindowTextW(inst->hSelf, title.c_str());
     }
     if (inst->hSelf)
@@ -638,24 +576,19 @@ Document *CreateDoc(NotepadInstance *inst, const std::wstring &initialText,
     doc->zoom = inst->zoom;
     doc->wordWrap = inst->wordWrap;
     doc->readOnly = inst->readOnly;
-
     HWND hParent = inst->hSelf;
-
-    // Determine document type based on extension
     fs::path p(filePath);
     std::wstring ext = p.extension().wstring();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::towupper);
-
     if (ext == L".PDF")
     {
         doc->docType = NPDocType::Pdf;
-        doc->pdfDoc = nullptr; // Placeholder for PDFium document.
+        doc->pdfDoc = nullptr;
         doc->pdfZoom = 1.0f;
         doc->currentPage = 0;
-        // Create a placeholder PDF view window.
-        doc->hPdfView = CreateWindowExW(0, L"PdfViewClass", L"",
-                                        WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
-                                        0, 0, 100, 100, hParent, nullptr, inst->hInst, nullptr);
+        doc->hPdfView =
+            CreateWindowExW(0, L"PdfViewClass", L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, 0,
+                            100, 100, hParent, nullptr, inst->hInst, nullptr);
     }
     else
     {
@@ -663,7 +596,7 @@ Document *CreateDoc(NotepadInstance *inst, const std::wstring &initialText,
         doc->hEdit = CreateWindowExW(0, L"RICHEDIT50W", L"",
                                      WS_CHILD | WS_TABSTOP | WS_VSCROLL | ES_MULTILINE |
                                          ES_AUTOVSCROLL | ES_WANTRETURN | ES_NOHIDESEL,
-                                         0, 0, 100, 100, hParent, nullptr, inst->hInst, nullptr);
+                                     0, 0, 100, 100, hParent, nullptr, inst->hInst, nullptr);
         SendMessageW(doc->hEdit, EM_SETBKGNDCOLOR, 0, inst->theme.BgApp);
         SendMessageW(doc->hEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
                      MAKELPARAM(Dpi(inst, 16), Dpi(inst, 16)));
@@ -824,11 +757,11 @@ static int GetCharCount(NotepadInstance *inst)
     LRESULT n = SendMessageW(inst->hEdit, EM_GETTEXTLENGTHEX, (WPARAM)&gt, 0);
     return n < 0 ? 0 : (int)n;
 }
+
 void ApplyZoom(NotepadInstance *inst)
 {
-    if (!inst->hEdit)
-        return;
-    SendMessageW(inst->hEdit, EM_SETZOOM, (WPARAM)inst->zoom, (WPARAM)100);
+    if (inst->hEdit)
+        SendMessageW(inst->hEdit, EM_SETZOOM, (WPARAM)inst->zoom, (WPARAM)100);
 }
 void ApplyWordWrap(NotepadInstance *inst)
 {
@@ -853,6 +786,7 @@ void ApplyEditorFont(NotepadInstance *inst)
         if (d->hEdit)
             SendMessageW(d->hEdit, EM_SETCHARFORMAT, SCF_DEFAULT | SCF_ALL, (LPARAM)&cf);
 }
+
 static void UpdateTitle(NotepadInstance *inst)
 {
     if (inst->isChild || !inst->hSelf)
@@ -864,9 +798,10 @@ static void UpdateTitle(NotepadInstance *inst)
         title = BaseNameW(inst->currentFile);
     if (inst->modified)
         title = L"\u25CF " + title;
-    title += L"  \u2014  " + std::wstring(APP_NAME);
+    title += L" \u2014 " + std::wstring(APP_NAME);
     SetWindowTextW(inst->hSelf, title.c_str());
 }
+
 void SetModified(NotepadInstance *inst, bool modified)
 {
     bool prev = inst->modified;
@@ -922,6 +857,7 @@ static std::wstring GetEditorText(NotepadInstance *inst)
     SendMessageW(inst->hEdit, EM_GETTEXTEX, (WPARAM)&gt, (LPARAM)buf.data());
     return std::wstring(buf.data());
 }
+
 void DoSave(NotepadInstance *inst, bool saveAs)
 {
     if (!inst->hEdit)
@@ -1671,7 +1607,6 @@ void SetToolbarSize(NotepadInstance *inst, ToolbarSize size)
 
 void SetToolbarDock(NotepadInstance *inst, ToolbarDock dock)
 {
-    // Disable floating in child mode
     if (inst->isChild && dock == TBDOCK_FLOAT)
         return;
     if (dock == inst->tbDock)
@@ -1753,7 +1688,6 @@ void ShowToolbarMenu(NotepadInstance *inst, HWND owner, int x, int y)
     add(IDM_TB_SIZE_SMALL, L"Small icons", inst->tbSize == TBSIZE_SMALL);
     add(IDM_TB_SIZE_MEDIUM, L"Medium icons", inst->tbSize == TBSIZE_MEDIUM);
     add(IDM_TB_SIZE_LARGE, L"Large icons", inst->tbSize == TBSIZE_LARGE);
-    // (ShowThemedMenu is defined further down -- we forward to it)
     extern int ShowThemedMenuInst(NotepadInstance *, HWND, int, int, const std::vector<MenuItem> &);
     int chosen = ShowThemedMenuInst(inst, owner, x, y, items);
     switch (chosen)
@@ -1785,7 +1719,7 @@ void ShowToolbarMenu(NotepadInstance *inst, HWND owner, int x, int y)
     }
 }
 
-// ---- Themed popup menu (instance-aware) ----
+// ---- Themed popup menu ----
 static int MenuItemAtY(NotepadInstance *inst, int y)
 {
     if (!inst->menuItems)
@@ -1821,8 +1755,6 @@ LRESULT CALLBACK MenuProc(HWND h, UINT m, WPARAM w, LPARAM l)
             EndPaint(h, &ps);
             return 0;
         }
-        // The popup is clipped to a rounded region, so filling the whole client
-        // rect leaves no stale pixels where a previous menu used to be.
         FillSolid(hdc, rc, inst->theme.BgCard);
         RECT card = {rc.left + 1, rc.top + 1, rc.right - 1, rc.bottom - 1};
         StrokeRoundRect(hdc, card, Dpi(inst, 8), inst->theme.Border);
@@ -1987,14 +1919,9 @@ int ShowThemedMenuInst(NotepadInstance *inst, HWND owner, int x, int y,
         inst->menuItems = nullptr;
         return 0;
     }
-
-    // Rounding through a window region keeps the desktop visible in the corners
-    // and avoids painting outside the card.
     const int radius = Dpi(inst, 8);
     if (HRGN region = CreateRoundRectRgn(0, 0, maxW + 1, totalH + 1, radius * 2, radius * 2))
-    {
         SetWindowRgn(inst->menuWnd, region, FALSE);
-    }
     SetWindowLongPtrW(inst->menuWnd, GWLP_USERDATA, (LONG_PTR)inst);
     ShowWindow(inst->menuWnd, SW_SHOW);
     SetForegroundWindow(inst->menuWnd);
@@ -2012,7 +1939,7 @@ int ShowThemedMenuInst(NotepadInstance *inst, HWND owner, int x, int y,
     return inst->menuResult;
 }
 
-// ---- Owner-draw buttons (instance-aware) ----
+// ---- Owner-draw buttons ----
 static bool ButtonStyleFor(NotepadInstance *inst, int id, BtnStyle &st)
 {
     switch (id)
@@ -2096,7 +2023,6 @@ static void DrawButton(NotepadInstance *inst, const DRAWITEMSTRUCT *d)
     bool down = (d->itemState & ODS_SELECTED) != 0;
     bool hot = !down && (d->hwndItem == inst->hotBtn);
     bool disabled = (d->itemState & ODS_DISABLED) != 0;
-    // Read-only disables editing buttons
     if (inst->readOnly)
     {
         int id = (int)d->CtlID;
@@ -2655,7 +2581,6 @@ void ShowMainMenu(NotepadInstance *inst, HWND hWnd)
     add(IDM_STATUS, L"Status Bar", L"", inst->showStatus);
     add(IDM_TOOLBAR, L"Toolbar", L"", tbVisible);
     sep();
-    // A host palette replaces the built-in one, so no mode is shown as active.
     const bool builtIn = !inst->customTheme;
     add(IDM_THEME_SYSTEM, L"Theme: System", L"", builtIn && inst->themeMode == ThemeMode::System);
     add(IDM_THEME_LIGHT, L"Theme: Light", L"", builtIn && inst->themeMode == ThemeMode::Light);
@@ -2745,7 +2670,7 @@ static void PaintStatusBar(NotepadInstance *inst, HDC hdc, const RECT &rc)
     SelectObject(hdc, of);
 }
 
-// ---- WndProc (instance-aware) ----
+// ---- WndProc ----
 static bool MouseOverTabBar(NotepadInstance *inst, LPARAM lParam)
 {
     int y = GET_Y_LPARAM(lParam);
@@ -2759,10 +2684,7 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
     case WM_CREATE:
         return 0;
-
     case WM_SETTINGCHANGE:
-        // Windows broadcasts this to top-level windows only. The panel reacts
-        // when the host forwards it, which is what the standalone app does.
         if (inst && inst->themeMode == ThemeMode::System && !inst->customTheme && lParam &&
             wcscmp(reinterpret_cast<LPCWSTR>(lParam), L"ImmersiveColorSet") == 0)
         {
@@ -2770,7 +2692,6 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             RefreshTheme(inst);
         }
         return 0;
-
     case WM_SIZE:
         if (inst)
         {
@@ -2778,7 +2699,6 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             InvalidateRect(hWnd, nullptr, TRUE);
         }
         return 0;
-
     case WM_GETMINMAXINFO:
         if (inst && inst->isChild)
             return 0;
@@ -2789,10 +2709,8 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             p->ptMinTrackSize.y = Dpi(inst, 360);
         }
         return 0;
-
     case WM_ERASEBKGND:
         return 1;
-
     case WM_PAINT:
     {
         PAINTSTRUCT ps;
@@ -2820,7 +2738,6 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         EndPaint(hWnd, &ps);
         return 0;
     }
-
     case WM_DRAWITEM:
     {
         if (inst)
@@ -2830,7 +2747,6 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         return 0;
     }
-
     case WM_MOUSEMOVE:
     {
         if (!inst)
@@ -2867,7 +2783,6 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         UpdateHotButton(inst, hWnd, lParam);
         return 0;
     }
-
     case WM_MOUSELEAVE:
         if (inst)
         {
@@ -2880,7 +2795,6 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             }
         }
         return 0;
-
     case WM_LBUTTONDOWN:
     {
         if (!inst)
@@ -2913,7 +2827,6 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         break;
     }
-
     case WM_MBUTTONDOWN:
         if (inst && MouseOverTabBar(inst, lParam))
         {
@@ -2926,7 +2839,6 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
         break;
-
     case WM_RBUTTONUP:
         if (inst && MouseOverTabBar(inst, lParam))
         {
@@ -2940,7 +2852,6 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
         break;
-
     case WM_LBUTTONDBLCLK:
         if (inst && MouseOverTabBar(inst, lParam))
         {
@@ -2951,12 +2862,10 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
         break;
-
     case WM_RENAME_COMMIT:
         if (inst)
             CommitRename(inst, wParam != 0);
         return 0;
-
     case WM_CTLCOLOREDIT:
     case WM_CTLCOLORSTATIC:
     {
@@ -2980,7 +2889,6 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         inst->brAppBg = CreateSolidBrush(inst->theme.BgApp);
         return (LRESULT)inst->brAppBg;
     }
-
     case WM_COMMAND:
     {
         if (!inst)
@@ -3050,7 +2958,6 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         return 0;
     }
-
     case WM_NOTIFY:
     {
         if (!inst)
@@ -3074,16 +2981,13 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         return 0;
     }
-
     case WM_SETFOCUS:
         if (inst && inst->hEdit)
             SetFocus(inst->hEdit);
         return 0;
-
     case WM_KEYDOWN:
         if (!inst)
             break;
-        // Check suppressed shortcuts
         if (GetKeyState(VK_CONTROL) & 0x8000)
         {
             int cmd = 0;
@@ -3131,7 +3035,6 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 cmd = IDM_ZOOM_RESET;
                 break;
             }
-            // Ctrl+W is close-tab, not exit
             if (wParam == 'W')
             {
                 if (inst->suppressedCmds.count(IDM_EXIT))
@@ -3140,7 +3043,6 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     CloseDoc(inst, inst->activeDoc);
                 return 0;
             }
-            // Ctrl+T is new tab
             if (wParam == 'T')
             {
                 if (inst->suppressedCmds.count(IDM_NEW))
@@ -3176,13 +3078,11 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             }
         }
         break;
-
     case WM_CLOSE:
         if (!inst)
             return 0;
         if (inst->isChild)
         {
-            // In child mode, notify host and let it decide
             FireNotify(inst, NP_NOTIFY_TAB_CLOSED, -1);
             return 0;
         }
@@ -3190,12 +3090,10 @@ LRESULT CALLBACK PanelWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         DestroyWindow(hWnd);
         return 0;
-
     case WM_DESTROY:
     {
         if (inst)
         {
-            // Save settings if standalone
             if (!inst->hostManaged && !inst->isChild)
             {
                 SyncToActive(inst);
@@ -3268,17 +3166,14 @@ NP_API BOOL InitializeNotepadPanel(HINSTANCE hInstance)
         g_hInst = hInstance ? hInstance : GetModuleHandleW(nullptr);
     if (!g_hInst)
         return FALSE;
-
     if (!g_msftedit)
         g_msftedit = LoadLibraryW(L"msftedit.dll");
     if (!g_msftedit)
         return FALSE;
-
     INITCOMMONCONTROLSEX controls{};
     controls.dwSize = sizeof(controls);
     controls.dwICC = ICC_STANDARD_CLASSES;
     InitCommonControlsEx(&controls);
-
     RegisterClasses();
     return g_classesRegistered ? TRUE : FALSE;
 }
@@ -3330,8 +3225,6 @@ static void InitInstance(NotepadInstance *inst, HWND hWnd, HWND hParent, HINSTAN
     inst->hParent = hParent;
     inst->hInst = hInst;
     inst->instanceId = NotepadInstance::s_nextId++;
-    // Embedded panels start dark so a host that never calls SetThemeMode sees
-    // the palette this library shipped with. The standalone app selects System.
     inst->themeMode = ThemeMode::Dark;
     inst->darkMode = ResolveDarkMode(inst->themeMode);
     inst->theme = GetPalette(inst->darkMode);
@@ -3340,7 +3233,6 @@ static void InitInstance(NotepadInstance *inst, HWND hWnd, HWND hParent, HINSTAN
     inst->isChild = (GetWindowLongPtrW(hWnd, GWL_STYLE) & WS_CHILD) != 0;
     inst->hostManaged = (notifyProc != nullptr) || inst->isChild;
     inst->dpi = GetDeviceCaps(GetDC(hWnd), LOGPIXELSY);
-
     CreateInstanceFonts(inst);
     inst->iconFont = CreateFontW(-Dpi(inst, 18), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
@@ -3369,7 +3261,6 @@ static void InitInstance(NotepadInstance *inst, HWND hWnd, HWND hParent, HINSTAN
         LoadAppSettings(inst);
     else
     {
-        // Default settings for host-managed mode
         ZeroMemory(&inst->logFont, sizeof(inst->logFont));
         wcscpy_s(inst->logFont.lfFaceName, L"Segoe UI");
         inst->logFont.lfHeight = -MulDiv(11, inst->dpi, 72);
@@ -3377,24 +3268,20 @@ static void InitInstance(NotepadInstance *inst, HWND hWnd, HWND hParent, HINSTAN
         inst->logFont.lfCharSet = DEFAULT_CHARSET;
         inst->logFont.lfQuality = CLEARTYPE_QUALITY;
     }
-
     SetWindowLongPtrW(hWnd, GWLP_USERDATA, (LONG_PTR)inst);
-
     CreateDoc(inst, L"", L"");
     SetActiveDoc(inst, 0);
-
     inst->hToolbarHost = CreateWindowW(TOOLBAR_CLASS, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
                                        0, 0, 100, Dpi(inst, 46), hWnd, nullptr, hInst, nullptr);
-    static const int tbIds[15] = {IDC_TB_MENU,    IDC_TB_NEW,  IDC_TB_OPEN, IDC_TB_SAVE,
-                                      IDC_TB_UNDO,    IDC_TB_REDO, IDC_TB_FIND, IDC_TB_ZOOM_OUT,
-                                      IDC_TB_ZOOM_IN, IDC_TB_WRAP, IDC_TB_PDF_PREV, IDC_TB_PDF_NEXT,
-                                      IDC_TB_PDF_ZOOM_IN, IDC_TB_PDF_ZOOM_OUT, IDC_TB_ANNOTATE};
+    static const int tbIds[15] = {
+        IDC_TB_MENU,     IDC_TB_NEW,      IDC_TB_OPEN,        IDC_TB_SAVE,         IDC_TB_UNDO,
+        IDC_TB_REDO,     IDC_TB_FIND,     IDC_TB_ZOOM_OUT,    IDC_TB_ZOOM_IN,      IDC_TB_WRAP,
+        IDC_TB_PDF_PREV, IDC_TB_PDF_NEXT, IDC_TB_PDF_ZOOM_IN, IDC_TB_PDF_ZOOM_OUT, IDC_TB_ANNOTATE};
     for (int i = 0; i < 15; ++i)
     {
         inst->hTbBtns[i] = MakeButton(inst, inst->hToolbarHost, tbIds[i]);
         SetWindowSubclass(inst->hTbBtns[i], ToolbarBtnProc, 100 + i, 0);
     }
-
     inst->hSearchFind = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL, 0, 0, 100, 28,
                                         hWnd, (HMENU)(INT_PTR)IDC_SEARCH_FIND, hInst, nullptr);
     inst->hSearchRepl = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL, 0, 0, 100, 28,
@@ -3415,14 +3302,12 @@ static void InitInstance(NotepadInstance *inst, HWND hWnd, HWND hParent, HINSTAN
     for (HWND h : searchCtrls)
         if (h)
             ShowWindow(h, SW_HIDE);
-
     if (inst->tbDock != TBDOCK_TOP)
     {
         ToolbarDock want = inst->tbDock;
         inst->tbDock = TBDOCK_TOP;
         SetToolbarDock(inst, want);
     }
-
     UpdateLayout(inst, hWnd);
 }
 
@@ -3430,9 +3315,7 @@ static void InitInstance(NotepadInstance *inst, HWND hWnd, HWND hParent, HINSTAN
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID)
 {
     if (reason == DLL_PROCESS_ATTACH)
-    {
         InitializeNotepadPanel((HINSTANCE)hModule);
-    }
     else if (reason == DLL_PROCESS_DETACH)
     {
         if (g_msftedit)
@@ -3445,7 +3328,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID)
 }
 
 // ---- Exported API: Creation / destruction ----
-
 NP_API HWND CreateNotepadPanel(HWND hParent, const RECT *rc, int id, NPNOTIFYPROC notifyProc,
                                void *userData)
 {
@@ -3453,20 +3335,15 @@ NP_API HWND CreateNotepadPanel(HWND hParent, const RECT *rc, int id, NPNOTIFYPRO
         return nullptr;
     RECT actualRc;
     if (!rc || (rc->right == 0 && rc->bottom == 0))
-    {
         GetClientRect(hParent, &actualRc);
-    }
     else
-    {
         actualRc = *rc;
-    }
     DWORD style = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_TABSTOP;
     HWND hWnd = CreateWindowExW(0, PANEL_CLASS, L"", style, actualRc.left, actualRc.top,
                                 actualRc.right - actualRc.left, actualRc.bottom - actualRc.top,
                                 hParent, (HMENU)(INT_PTR)id, g_hInst, nullptr);
     if (!hWnd)
         return nullptr;
-
     NotepadInstance *inst = new NotepadInstance();
     InitInstance(inst, hWnd, hParent, g_hInst, notifyProc, userData);
     return hWnd;
@@ -3489,20 +3366,15 @@ NP_API BOOL ResizeNotepadPanel(HWND hPanel, const RECT *rc)
         return FALSE;
     RECT actualRc;
     if (!rc || (rc->right == 0 && rc->bottom == 0))
-    {
         GetClientRect(inst->hParent, &actualRc);
-    }
     else
-    {
         actualRc = *rc;
-    }
     MoveWindow(hPanel, actualRc.left, actualRc.top, actualRc.right - actualRc.left,
                actualRc.bottom - actualRc.top, TRUE);
     return TRUE;
 }
 
 // ---- Exported API: Content I/O ----
-
 NP_API int GetTextW(HWND hPanel, wchar_t *buf, int bufLen)
 {
     NotepadInstance *inst = GetInstance(hPanel);
@@ -3595,19 +3467,16 @@ NP_API BOOL SetSelectedTextW(HWND hPanel, const wchar_t *text)
 }
 
 // ---- Exported API: Tab management ----
-
 NP_API int GetTabCount(HWND hPanel)
 {
     NotepadInstance *inst = GetInstance(hPanel);
     return inst ? (int)inst->docs.size() : 0;
 }
-
 NP_API int GetActiveTab(HWND hPanel)
 {
     NotepadInstance *inst = GetInstance(hPanel);
     return inst ? inst->activeDoc : -1;
 }
-
 NP_API BOOL SetActiveTab(HWND hPanel, int index)
 {
     NotepadInstance *inst = GetInstance(hPanel);
@@ -3706,23 +3575,15 @@ NP_API BOOL SaveTab(HWND hPanel, int index, BOOL saveAs)
 }
 
 // ---- Theme application ----
-
-/// A custom palette is not tied to a Windows mode, so the scrollbar and edit
-/// styling is chosen from the background luminance instead.
 static bool IsDarkPalette(const ThemePalette &palette)
 {
     const int red = GetRValue(palette.BgApp);
     const int green = GetGValue(palette.BgApp);
     const int blue = GetBValue(palette.BgApp);
-
-    // Rec. 601 luma in integer arithmetic.
     const int luminance = (red * 299 + green * 587 + blue * 114) / 1000;
     return luminance < 128;
 }
 
-/// Re-applies the palette to every surface that caches colours. Rich Edit keeps
-/// its own default character format, so both the background and CFM_COLOR have
-/// to be pushed again after a mode change.
 static void ApplyThemeToDocuments(NotepadInstance *inst)
 {
     for (Document *doc : inst->docs)
@@ -3731,14 +3592,12 @@ static void ApplyThemeToDocuments(NotepadInstance *inst)
             continue;
         SendMessageW(doc->hEdit, EM_SETBKGNDCOLOR, 0, inst->theme.BgApp);
         ApplyControlTheme(doc->hEdit, inst->darkMode);
-
         CHARFORMAT2W format = {};
         format.cbSize = sizeof(format);
         format.dwMask = CFM_COLOR;
         format.crTextColor = inst->theme.TextHi;
         SendMessageW(doc->hEdit, EM_SETCHARFORMAT, SCF_DEFAULT | SCF_ALL, (LPARAM)&format);
     }
-
     ApplyControlTheme(inst->hRenameEdit, inst->darkMode);
     ApplyControlTheme(inst->hSearchFind, inst->darkMode);
     ApplyControlTheme(inst->hSearchRepl, inst->darkMode);
@@ -3747,8 +3606,6 @@ static void ApplyThemeToDocuments(NotepadInstance *inst)
 static void RefreshTheme(NotepadInstance *inst)
 {
     ApplyThemeToDocuments(inst);
-
-    // Brushes handed to WM_CTLCOLOR* still hold the previous palette.
     if (inst->brSearchBg)
     {
         DeleteObject(inst->brSearchBg);
@@ -3759,24 +3616,13 @@ static void RefreshTheme(NotepadInstance *inst)
         DeleteObject(inst->brAppBg);
         inst->brAppBg = nullptr;
     }
-
-    // Invalidating only the panel leaves every child window -- the toolbar host,
-    // its owner-draw buttons, and the search fields -- painted with the old
-    // palette. RDW_ALLCHILDREN walks the whole tree.
     const UINT flags = RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW;
     if (inst->hSelf)
-    {
         RedrawWindow(inst->hSelf, nullptr, nullptr, flags);
-    }
     if (inst->hToolbarHost)
-    {
         RedrawWindow(inst->hToolbarHost, nullptr, nullptr, flags);
-    }
     if (inst->menuWnd)
-    {
         InvalidateRect(inst->menuWnd, nullptr, TRUE);
-    }
-
     FireNotify(inst, NP_NOTIFY_THEME_CHANGED, -1);
 }
 
@@ -3789,17 +3635,13 @@ static void ApplyThemeMode(NotepadInstance *inst, ThemeMode mode)
 }
 
 // ---- Exported API: Theme ----
-
 NP_API BOOL SetTheme(HWND hPanel, const NPTheme *theme)
 {
     NotepadInstance *inst = GetInstance(hPanel);
     if (!inst)
         return FALSE;
-
     if (!theme)
-    {
         ApplyThemeMode(inst, inst->themeMode);
-    }
     else
     {
         inst->customTheme = true;
@@ -3820,7 +3662,6 @@ NP_API BOOL SetTheme(HWND hPanel, const NPTheme *theme)
         inst->theme.IconActive = theme->iconActive;
         inst->darkMode = IsDarkPalette(inst->theme);
     }
-
     RefreshTheme(inst);
     return TRUE;
 }
@@ -3830,7 +3671,6 @@ NP_API BOOL SetThemeMode(HWND hPanel, int mode)
     NotepadInstance *inst = GetInstance(hPanel);
     if (!inst || mode < NP_THEME_SYSTEM || mode > NP_THEME_DARK)
         return FALSE;
-
     ApplyThemeMode(inst, static_cast<ThemeMode>(mode));
     RefreshTheme(inst);
     return TRUE;
@@ -3867,7 +3707,6 @@ NP_API BOOL GetTheme(HWND hPanel, NPTheme *outTheme)
 }
 
 // ---- Exported API: Font ----
-
 NP_API BOOL SetFontW(HWND hPanel, const LOGFONTW *logFont)
 {
     NotepadInstance *inst = GetInstance(hPanel);
@@ -3883,9 +3722,7 @@ NP_API BOOL SetFontW(HWND hPanel, const LOGFONTW *logFont)
         inst->logFont.lfQuality = CLEARTYPE_QUALITY;
     }
     else
-    {
         inst->logFont = *logFont;
-    }
     ApplyEditorFont(inst);
     return TRUE;
 }
@@ -3900,7 +3737,6 @@ NP_API BOOL GetFontW(HWND hPanel, LOGFONTW *outLogFont)
 }
 
 // ---- Exported API: View settings ----
-
 NP_API BOOL SetWordWrap(HWND hPanel, BOOL wrap)
 {
     NotepadInstance *inst = GetInstance(hPanel);
@@ -3916,6 +3752,7 @@ NP_API BOOL GetWordWrap(HWND hPanel)
     NotepadInstance *inst = GetInstance(hPanel);
     return inst ? (inst->wordWrap ? TRUE : FALSE) : FALSE;
 }
+
 NP_API BOOL SetZoom(HWND hPanel, int percent)
 {
     NotepadInstance *inst = GetInstance(hPanel);
@@ -3936,6 +3773,7 @@ NP_API int GetZoom(HWND hPanel)
     NotepadInstance *inst = GetInstance(hPanel);
     return inst ? inst->zoom : 0;
 }
+
 NP_API BOOL SetStatusBarVisible(HWND hPanel, BOOL visible)
 {
     NotepadInstance *inst = GetInstance(hPanel);
@@ -3951,6 +3789,7 @@ NP_API BOOL GetStatusBarVisible(HWND hPanel)
     NotepadInstance *inst = GetInstance(hPanel);
     return inst ? (inst->showStatus ? TRUE : FALSE) : FALSE;
 }
+
 NP_API BOOL SetToolbarVisible(HWND hPanel, BOOL visible)
 {
     NotepadInstance *inst = GetInstance(hPanel);
@@ -3969,7 +3808,6 @@ NP_API BOOL GetToolbarVisible(HWND hPanel)
 }
 
 // ---- Exported API: Read-only ----
-
 NP_API BOOL SetReadOnly(HWND hPanel, BOOL readOnly)
 {
     NotepadInstance *inst = GetInstance(hPanel);
@@ -3990,7 +3828,6 @@ NP_API BOOL GetReadOnly(HWND hPanel)
 }
 
 // ---- Exported API: Notifications ----
-
 NP_API BOOL SetNotifyProc(HWND hPanel, NPNOTIFYPROC proc, void *userData)
 {
     NotepadInstance *inst = GetInstance(hPanel);
@@ -4002,7 +3839,6 @@ NP_API BOOL SetNotifyProc(HWND hPanel, NPNOTIFYPROC proc, void *userData)
 }
 
 // ---- Exported API: Keyboard accelerators ----
-
 static const NPAccel s_accelerators[] = {
     {IDM_NEW, FVIRTKEY | FCONTROL, 'N'},
     {IDM_NEW, FVIRTKEY | FCONTROL, 'T'},

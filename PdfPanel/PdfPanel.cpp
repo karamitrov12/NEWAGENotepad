@@ -145,4 +145,4 @@ NP_API BOOL PdfGetReadOnly(HWND hPanel) {
     return doc ? doc->readOnly : FALSE;
 }
 
-} // extern "C"
+} 

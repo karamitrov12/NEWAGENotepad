@@ -1,144 +1,63 @@
-// NEWAGENOTEPADMain.cpp -- Standalone frame that hosts a NotepadPanel
+// NEWAGENOTEPADMain.cpp -- Thin exe wrapper that hosts a NotepadPanel as a standalone app
 //
-// The executable owns the top-level window and the message loop; the panel owns
-// everything inside it. Closing the frame destroys the panel, which releases its
-// child windows, fonts, and document records.
-//
-// Build: configure as an Application (.exe) that compiles NotepadPanel.cpp with
-//        NOTEPAD_PANEL_STATIC. msftedit.dll is loaded on demand.
+ // Build: configure as an Application (.exe) that links NotepadPanel.lib.
+ // This reproduces the original standalone behavior by creating a top-level
+ // frame window and embedding the panel as a child.
 
-#include "pch.h"
+#ifndef WIN32_LEAN_AND_MEAN // Use this compatibility fallback only when WIN32_LEAN_AND_MEAN is not defined.
+#define WIN32_LEAN_AND_MEAN // Define WIN32_LEAN_AND_MEAN as a compile-time setting.
+#endif // Close the current compile-time condition.
+#ifndef NOMINMAX // Use this compatibility fallback only when NOMINMAX is not defined.
+#define NOMINMAX // Define NOMINMAX as a compile-time setting.
+#endif // Close the current compile-time condition.
 
-#include "NotepadPanel.h"
-#include "PdfPanel/PdfPanel.h"
-#include "Theme/Theme.h"
+#include <windows.h> // Import the Win32 API.
+#include "NotepadPanel.h" // Import the editor panel API.
+#include "PdfPanel/PdfPanel.h" // Import PDF panel API.
+#include "resource.h" // Import application resource identifiers.
+#include <commdlg.h> // For file dialogs
 
-#include <commctrl.h>
-#include <commdlg.h>
-#include <windowsx.h>
+#pragma comment(lib, "dwmapi.lib") // Link the dwmapi.lib Windows library.
 
-// ---- Constants ----
+static const wchar_t FRAME_CLASS[] = L"NEWAGENOTEPADFrame"; // Name the frame window class that Win32 registers for this component.
+static HWND g_hFrame = nullptr; // Declare the top-level Notepad frame window and start with no handle assigned.
+static HWND g_hPanel = nullptr; // Declare the editor panel hosted inside the frame and start with no handle assigned.
+static HWND g_hPdfViewer = nullptr; // Declare the PDF viewer panel
+static HINSTANCE g_hInst = nullptr; // Declare the application module handle used to register and create windows and start with no handle assigned.
 
-static const wchar_t FRAME_CLASS[] = L"NEWAGENOTEPADFrame";
-static const wchar_t WINDOW_TITLE[] = L"Neage Notepad";
-static const int kDefaultWidth = 980;
-static const int kDefaultHeight = 680;
-static const int kMinWidth = 560;
-static const int kMinHeight = 360;
-
-// ---- Global state ----
-
-static HINSTANCE g_hInst = nullptr;
-static HWND g_hFrame = nullptr;
-static HWND g_hPanel = nullptr;
-static HWND g_hPdfViewer = nullptr;
-
-// The standalone app follows Windows; SetThemeMode resolves the registry value.
-static const int kThemeMode = NP_THEME_SYSTEM;
-
-// ---- Dpi awareness ----
-
-static void EnableDpiAwareness()
-{
-#ifndef DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
-#define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((DPI_AWARENESS_CONTEXT) - 4)
-#endif
-    using SetContextFn = BOOL(WINAPI *)(DPI_AWARENESS_CONTEXT);
-    HMODULE user32 = GetModuleHandleW(L"user32.dll");
-    if (user32)
-    {
-        SetContextFn setContext =
-            reinterpret_cast<SetContextFn>(GetProcAddress(user32, "SetProcessDpiAwarenessContext"));
-        if (setContext && setContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
-        {
-            return;
-        }
-    }
-    SetProcessDPIAware();
-}
-
-static int GetSystemDpi()
-{
-    HDC screen = GetDC(nullptr);
-    if (!screen)
-    {
-        return 96;
-    }
-    const int dpi = GetDeviceCaps(screen, LOGPIXELSY);
-    ReleaseDC(nullptr, screen);
-    return dpi > 0 ? dpi : 96;
-}
-
-// ---- Theme ----
-
-static void ApplyChromeTheme()
-{
-    // The panel owns the mode (the View menu can change it), so ask the panel
-    // instead of assuming the startup value.
-    const int mode = g_hPanel ? GetThemeMode(g_hPanel) : kThemeMode;
-    ApplyTitleBarTheme(g_hFrame, ResolveDarkMode(static_cast<ThemeMode>(mode)));
-}
-
-static void BuildMainMenu()
-{
-    HMENU hMenuBar = CreateMenu();
-    HMENU hFileMenu = CreatePopupMenu();
-
-    AppendMenuW(hFileMenu, MF_STRING, 100, L"New");
-    AppendMenuW(hFileMenu, MF_STRING, 101, L"Open");
-    AppendMenuW(hFileMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(hFileMenu, MF_STRING, IDM_PDF_OPEN, L"Open PDF...");
-    AppendMenuW(hFileMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(hFileMenu, MF_STRING, 102, L"Exit");
-
-    AppendMenuW(hMenuBar, MF_POPUP, (UINT_PTR)hFileMenu, L"File");
-
-    SetMenu(g_hFrame, hMenuBar);
-}
-
-// ---- Frame procedure ----
-
-static LRESULT CALLBACK FrameProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-    switch (msg)
-    {
-    case WM_SIZE:
-        if (g_hPanel)
-        {
-            RECT client = {};
-            GetClientRect(hWnd, &client);
-            ResizeNotepadPanel(g_hPanel, &client);
+static LRESULT CALLBACK FrameProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) { // Define FrameProc as the function that implements this part of the panel.
+    switch (msg) { // Choose the handler based on the current message or command.
+    case WM_SIZE: // Handle WM_SIZE to resize child controls with the host.
+        if (g_hPanel) {
+            RECT rc; GetClientRect(hWnd, &rc);
+            ResizeNotepadPanel(g_hPanel, &rc);
         }
         return 0;
-
-    case WM_SETTINGCHANGE:
-        // ImmersiveColorSet is posted when the user flips the Windows app theme.
-        // The panel is a child window, so the frame forwards the change to it.
-        if (kThemeMode == NP_THEME_SYSTEM && lParam &&
-            wcscmp(reinterpret_cast<LPCWSTR>(lParam), L"ImmersiveColorSet") == 0)
-        {
-            ApplyChromeTheme();
-            if (g_hPanel)
-            {
-                SendMessageW(g_hPanel, WM_SETTINGCHANGE, wParam, lParam);
-            }
+    case WM_CLOSE:
+        if (g_hPanel) {
+            DestroyNotepadPanel(g_hPanel);
+            g_hPanel = nullptr;
         }
+        if (g_hPdfViewer) {
+            PdfDestroyPanel(g_hPdfViewer);
+            g_hPdfViewer = nullptr;
+        }
+        DestroyWindow(hWnd);
         return 0;
-
-    case WM_GETMINMAXINFO:
-    {
-        MINMAXINFO *info = reinterpret_cast<MINMAXINFO *>(lParam);
-        const int dpi = GetSystemDpi();
-        info->ptMinTrackSize.x = ScaleMetric(kMinWidth, dpi);
-        info->ptMinTrackSize.y = ScaleMetric(kMinHeight, dpi);
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+    case WM_GETMINMAXINFO: {
+        MINMAXINFO* p = (MINMAXINFO*)lParam;
+        p->ptMinTrackSize.x = 560;
+        p->ptMinTrackSize.y = 360;
         return 0;
     }
-
     case WM_COMMAND:
     {
         const int cmd = static_cast<int>(wParam);
-        if (cmd == IDM_PDF_OPEN)
-        {
+        if (cmd == IDM_PDF_OPEN) {
+            // Open PDF File Dialog
             OPENFILENAMEW ofn = {0};
             wchar_t szFile[MAX_PATH] = {0};
             ofn.lStructSize = sizeof(ofn);
@@ -148,16 +67,13 @@ static LRESULT CALLBACK FrameProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
             ofn.lpstrFilter = L"PDF Files\0*.pdf\0All Files\0*.*\0";
             ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
 
-            if (GetOpenFileNameW(&ofn))
-            {
-                if (!g_hPdfViewer)
-                {
+            if (GetOpenFileNameW(&ofn)) {
+                if (!g_hPdfViewer) {
                     RECT rcClient = {};
                     GetClientRect(g_hFrame, &rcClient);
                     g_hPdfViewer = PdfCreatePanel(g_hFrame, &rcClient, 1001, nullptr, nullptr);
                 }
-                if (g_hPdfViewer)
-                {
+                if (g_hPdfViewer) {
                     PdfLoadFile(g_hPdfViewer, szFile);
                     SetForegroundWindow(g_hPdfViewer);
                 }
@@ -169,26 +85,22 @@ static LRESULT CALLBACK FrameProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
 
     case WM_NOTIFY:
     {
-        const NMHDR *header = reinterpret_cast<const NMHDR *>(lParam);
-        if (header && header->code == NP_NOTIFY_THEME_CHANGED)
-        {
+        const NMHDR* header = reinterpret_cast<const NMHDR*>(lParam);
+        if (header && header->code == NP_NOTIFY_THEME_CHANGED) {
+            // Apply theme changes to both panels
             ApplyChromeTheme();
         }
         return 0;
     }
 
-    case WM_CLOSE:
-        if (g_hPanel)
-        {
-            DestroyNotepadPanel(g_hPanel);
-            g_hPanel = nullptr;
+    case WM_NOTIFY:
+    {
+        const NMHDR* header = reinterpret_cast<const NMHDR*>(lParam);
+        if (header && header->code == NP_NOTIFY_THEME_CHANGED) {
+            ApplyChromeTheme();
         }
-        DestroyWindow(hWnd);
         return 0;
-
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
+    }
 
     default:
         break;
@@ -196,24 +108,36 @@ static LRESULT CALLBACK FrameProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
-// ---- Entry point ----
+static void EnableDpiAwareness() { // Define EnableDpiAwareness as the function that implements this part of the panel.
+#ifndef DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 // Use this compatibility fallback only when DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 is not defined.
+#define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((DPI_AWARENESS_CONTEXT)-4) // Define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 as a compile-time setting with value ((DPI_AWARENESS_CONTEXT)-4).
+#endif // Close the current compile-time condition.
+    using SetContextFn = BOOL(WINAPI*)(DPI_AWARENESS_CONTEXT);
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32) {
+        SetContextFn setContext =
+            reinterpret_cast<SetContextFn>(GetProcAddress(user32, "SetProcessDpiAwarenessContext"));
+        if (setContext && setContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
+            return;
+        }
+    }
+    SetProcessDPIAware();
+}
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int)
-{
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) { // Define WinMain as the function that implements this part of the panel.
     g_hInst = hInstance;
     EnableDpiAwareness();
 
-    if (!InitializeNotepadPanel(hInstance))
-    {
+    if (!InitializeNotepadPanel(hInstance)) {
         MessageBoxW(nullptr,
-                    L"The Notepad editor component could not initialize. Check that msftedit.dll "
-                    L"is available.",
-                    WINDOW_TITLE, MB_OK | MB_ICONERROR);
+            L"The Notepad editor component could not initialize. Check that msftedit.dll "
+            L"is available.",
+            WINDOW_TITLE, MB_OK | MB_ICONERROR);
         return 1;
     }
 
-    if (!PdfInitialize(hInstance))
-    {
+    // Initialize PDF component
+    if (!PdfInitialize(hInstance)) {
         MessageBoxW(nullptr, L"Failed to initialize PDF engine.", WINDOW_TITLE, MB_OK | MB_ICONERROR);
         return 1;
     }
@@ -226,22 +150,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int)
     windowClass.lpszClassName = FRAME_CLASS;
     windowClass.hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_APP_ICON));
     windowClass.style = CS_DBLCLKS;
-    if (!RegisterClassW(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
-    {
+    if (!RegisterClassW(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         MessageBoxW(nullptr, L"The Notepad window class could not be registered.", WINDOW_TITLE,
                     MB_OK | MB_ICONERROR);
         return 1;
     }
 
     const int dpi = GetSystemDpi();
-    RECT frame = {0, 0, ScaleMetric(kDefaultWidth, dpi), ScaleMetric(kDefaultHeight, dpi)};
+    RECT frame = {0, 0, ScaleMetric(980, dpi), ScaleMetric(680, dpi)};
     AdjustWindowRect(&frame, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, FALSE);
 
     g_hFrame = CreateWindowExW(0, FRAME_CLASS, WINDOW_TITLE, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                                CW_USEDEFAULT, CW_USEDEFAULT, frame.right - frame.left,
                                frame.bottom - frame.top, nullptr, nullptr, hInstance, nullptr);
-    if (!g_hFrame)
-    {
+    if (!g_hFrame) {
         MessageBoxW(nullptr, L"The Notepad window could not be created.", WINDOW_TITLE,
                     MB_OK | MB_ICONERROR);
         return 1;
@@ -251,8 +173,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int)
     RECT client = {};
     GetClientRect(g_hFrame, &client);
     g_hPanel = CreateNotepadPanel(g_hFrame, &client, 0, nullptr, nullptr);
-    if (!g_hPanel)
-    {
+    if (!g_hPanel) {
         MessageBoxW(g_hFrame, L"The editor panel could not be created.", WINDOW_TITLE,
                     MB_OK | MB_ICONERROR);
         DestroyWindow(g_hFrame);
@@ -262,16 +183,38 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int)
     SetThemeMode(g_hPanel, kThemeMode);
     ApplyChromeTheme();
 
-    BuildMainMenu();
+    BuildMainMenu(); // Add PDF menu item
 
     ShowWindow(g_hFrame, SW_SHOW);
     UpdateWindow(g_hFrame);
 
     MSG msg = {};
-    while (GetMessageW(&msg, nullptr, 0, 0))
-    {
+    while (GetMessageW(&msg, nullptr, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
     return static_cast<int>(msg.wParam);
+}
+
+static void BuildMainMenu() { // Add PDF menu item
+    HMENU hMenuBar = CreateMenu();
+    HMENU hFileMenu = CreatePopupMenu();
+
+    AppendMenuW(hFileMenu, MF_STRING, 100, L"New");
+    AppendMenuW(hFileMenu, MF_STRING, 101, L"Open");
+    AppendMenuW(hFileMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(hFileMenu, MF_STRING, IDM_PDF_OPEN, L"Open PDF...");
+    AppendMenuW(hFileMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(hFileMenu, MF_STRING, 102, L"Exit");
+
+    AppendMenuW(hMenuBar, MF_POPUP, (UINT_PTR)hFileMenu, L"File");
+    SetMenu(g_hFrame, hMenuBar);
+}
+
+static int GetSystemDpi() {
+    HDC screen = GetDC(nullptr);
+    if (!screen) return 96;
+    const int dpi = GetDeviceCaps(screen, LOGPIXELSY);
+    ReleaseDC(nullptr, screen);
+    return dpi > 0 ? dpi : 96;
 }
