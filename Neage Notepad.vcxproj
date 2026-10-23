@@ -161,11 +161,13 @@
     </ClCompile>
     <ClCompile Include="NEWAGENOTEPADMain.cpp" />
     <ClCompile Include="NotepadPanel.cpp" />
+    <ClCompile Include="PdfPanel\PdfPanel.cpp" />
     <ClCompile Include="Theme\Theme.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
     <ClInclude Include="NotepadPanel.h" />
+    <ClInclude Include="PdfPanel\PdfPanel.h" />
     <ClInclude Include="Theme\Theme.h" />
   </ItemGroup>
   <ItemGroup>

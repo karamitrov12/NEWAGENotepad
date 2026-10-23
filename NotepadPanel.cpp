@@ -29,9 +29,13 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include "PdfPanel.h"
+#pragma comment(lib, "PdfPanel.lib")
 #include <string>
 #include <unordered_set>
-#include <vector>
+#include #include <vector>
+#include "PdfPanel.h"
+#pragma comment(lib, "PdfPanel.lib")
 
 namespace fs = std::filesystem;
 

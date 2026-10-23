@@ -10,6 +10,7 @@
 #include "pch.h"
 
 #include "NotepadPanel.h"
+#include "PdfPanel/PdfPanel.h"
 #include "Theme/Theme.h"
 
 #include <commctrl.h>
@@ -29,6 +30,7 @@ static const int kMinHeight = 360;
 static HINSTANCE g_hInst = nullptr;
 static HWND g_hFrame = nullptr;
 static HWND g_hPanel = nullptr;
+static HWND g_hPdfViewer = nullptr;
 
 // The standalone app follows Windows; SetThemeMode resolves the registry value.
 static const int kThemeMode = NP_THEME_SYSTEM;
@@ -76,6 +78,23 @@ static void ApplyChromeTheme()
     ApplyTitleBarTheme(g_hFrame, ResolveDarkMode(static_cast<ThemeMode>(mode)));
 }
 
+static void BuildMainMenu()
+{
+    HMENU hMenuBar = CreateMenu();
+    HMENU hFileMenu = CreatePopupMenu();
+
+    AppendMenuW(hFileMenu, MF_STRING, 100, L"New");
+    AppendMenuW(hFileMenu, MF_STRING, 101, L"Open");
+    AppendMenuW(hFileMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(hFileMenu, MF_STRING, IDM_PDF_OPEN, L"Open PDF...");
+    AppendMenuW(hFileMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(hFileMenu, MF_STRING, 102, L"Exit");
+
+    AppendMenuW(hMenuBar, MF_POPUP, (UINT_PTR)hFileMenu, L"File");
+
+    SetMenu(g_hFrame, hMenuBar);
+}
+
 // ---- Frame procedure ----
 
 static LRESULT CALLBACK FrameProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -111,6 +130,42 @@ static LRESULT CALLBACK FrameProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
         const int dpi = GetSystemDpi();
         info->ptMinTrackSize.x = ScaleMetric(kMinWidth, dpi);
         info->ptMinTrackSize.y = ScaleMetric(kMinHeight, dpi);
+        return 0;
+    }
+
+    case WM_COMMAND:
+    {
+        const int cmd = static_cast<int>(wParam);
+        if (cmd == IDM_PDF_OPEN)
+        {
+            // Open PDF File Dialog
+            OPENFILENAMEW ofn = {0};
+            wchar_t szFile[MAX_PATH] = {0};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = g_hFrame;
+            ofn.lpstrFile = szFile;
+            ofn.nMaxFile = MAX_PATH;
+            ofn.lpstrFilter = L"PDF Files\0*.pdf\0All Files\0*.*\0";
+            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+
+            if (GetOpenFileNameW(&ofn))
+            {
+                if (!g_hPdfViewer)
+                {
+                    RECT rcClient = {};
+                    GetClientRect(g_hFrame, &rcClient);
+                    // For now, create it as a child of the frame.
+                    // Later we will integrate this into tabs.
+                    g_hPdfViewer = PdfCreatePanel(g_hFrame, &rcClient, 1001, nullptr, nullptr);
+                }
+                if (g_hPdfViewer)
+                {
+                    PdfLoadFile(g_hPdfViewer, szFile);
+                    SetForegroundWindow(g_hPdfViewer);
+                }
+            }
+            return 0;
+        }
         return 0;
     }
 
@@ -159,6 +214,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int)
         return 1;
     }
 
+    if (!PdfInitialize(hInstance))
+    {
+        MessageBoxW(nullptr, L"Failed to initialize PDF engine.", WINDOW_TITLE, MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
     WNDCLASSW windowClass = {};
     windowClass.lpfnWndProc = FrameProc;
     windowClass.hInstance = hInstance;
@@ -202,6 +263,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int)
 
     SetThemeMode(g_hPanel, kThemeMode);
     ApplyChromeTheme();
+
+    BuildMainMenu();
 
     ShowWindow(g_hFrame, SW_SHOW);
     UpdateWindow(g_hFrame);

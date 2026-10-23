@@ -30,6 +30,9 @@
     <ClCompile Include="Theme\Theme.cpp">
       <Filter>Theme</Filter>
     </ClCompile>
+    <ClCompile Include="PdfPanel\PdfPanel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="NotepadPanel.h">
@@ -40,6 +43,9 @@
     </ClInclude>
     <ClInclude Include="Theme\Theme.h">
       <Filter>Theme</Filter>
+    </ClInclude>
+    <ClInclude Include="PdfPanel\PdfPanel.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
