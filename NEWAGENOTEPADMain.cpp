@@ -14,6 +14,7 @@
 #include "Theme/Theme.h"
 
 #include <commctrl.h>
+#include <commdlg.h>
 #include <windowsx.h>
 
 // ---- Constants ----
@@ -138,7 +139,6 @@ static LRESULT CALLBACK FrameProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
         const int cmd = static_cast<int>(wParam);
         if (cmd == IDM_PDF_OPEN)
         {
-            // Open PDF File Dialog
             OPENFILENAMEW ofn = {0};
             wchar_t szFile[MAX_PATH] = {0};
             ofn.lStructSize = sizeof(ofn);
@@ -154,8 +154,6 @@ static LRESULT CALLBACK FrameProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
                 {
                     RECT rcClient = {};
                     GetClientRect(g_hFrame, &rcClient);
-                    // For now, create it as a child of the frame.
-                    // Later we will integrate this into tabs.
                     g_hPdfViewer = PdfCreatePanel(g_hFrame, &rcClient, 1001, nullptr, nullptr);
                 }
                 if (g_hPdfViewer)
